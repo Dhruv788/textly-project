@@ -93,7 +93,7 @@ const PrivacyRow: React.FC<{
   textColor: string;
   value: boolean;
   onChange: (val: boolean) => void;
-}> = ({ item, darkMode, textColor, value, onChange }) => {
+}> = ({ item, textColor, value, onChange }) => {
   return (
     <div style={{
       display: 'flex', alignItems: 'center',
@@ -306,6 +306,51 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* ── FRIENDS SECTION ── */}
+      {activeSection === 'friends' && (
+        <div style={styles.panelContent}>
+          <div style={styles.sbHead}>
+            <span style={{ ...styles.sbTitle, color: textColor }}>Friends</span>
+          </div>
+          <div style={styles.listScroll}>
+            {contacts.filter(c => c.type === 'direct').length === 0 ? (
+              <div style={{ padding: '40px 20px', textAlign: 'center', color: secondaryText }}>
+                <div style={{ fontSize: '40px', marginBottom: '12px' }}>👥</div>
+                <div style={{ fontSize: '16px', fontWeight: '500' }}>No friends yet</div>
+                <div style={{ fontSize: '13px', marginTop: '4px' }}>Start a chat to add friends!</div>
+              </div>
+            ) : (
+              contacts.filter(c => c.type === 'direct').map(contact => (
+                <div
+                  key={contact.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '11px 16px', cursor: 'pointer',
+                    borderBottom: '1px solid #f8fafc',
+                    background: contact.id === activeContactId ? '#eff6ff' : 'transparent',
+                    borderLeft: contact.id === activeContactId ? '3px solid #2563eb' : '3px solid transparent',
+                  }}
+                  onClick={() => { setActiveContactId(contact.id); setActiveSection('chats'); }}
+                >
+                  <div style={{ position: 'relative', flexShrink: 0 }}>
+                    <div style={{ ...styles.cAv, background: contact.color, width: '44px', height: '44px' }}>
+                      {contact.avatar}
+                    </div>
+                    <span style={{ ...styles.sdot, background: contact.status === 'online' ? '#22c55e' : contact.status === 'away' ? '#f59e0b' : '#94a3b8' }} />
+                  </div>
+                  <div style={styles.cInfo}>
+                    <div style={{ ...styles.cName, color: textColor }}>{contact.name}</div>
+                    <div style={{ fontSize: '12px', color: contact.status === 'online' ? '#22c55e' : secondaryText }}>
+                      {contact.status === 'online' ? 'Online' : 'Offline'}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
@@ -722,7 +767,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 };
 
 const styles: Record<string, React.CSSProperties> = {
-  sidebar: { width: '300px', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', flexShrink: 0, position: 'relative' },
+  sidebar: { width: '300px', height: '100%', borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', flexShrink: 0, position: 'relative', overflow: 'hidden' },
   panelContent: { display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' },
   sbHead: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 18px 12px', borderBottom: '1px solid #f1f5f9', flexShrink: 0 },
   sbTitle: { fontSize: '18px', fontWeight: 700 },

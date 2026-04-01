@@ -25,6 +25,8 @@ const ChatDashboard: React.FC = () => {
   const [showSearch, setShowSearch] = useState(false);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [typingUsers, setTypingUsers] = useState<{ [convId: string]: string }>({});
+  // Prevent unused variable warning
+  void typingUsers;
 
   // ── Start new direct chat
   const handleStartChat = useCallback(async (searchUser: any) => {
@@ -62,7 +64,7 @@ const ChatDashboard: React.FC = () => {
   }, []);
 
   // ── Create group chat
-  const handleCreateGroup = useCallback(({ conv, members }: { conv: any; members: any[] }) => {
+  const handleCreateGroup = useCallback(({ conv }: { conv: any; members?: any[] }) => {
     const newContact: Contact = {
       id: conv._id,
       conversationId: conv._id,

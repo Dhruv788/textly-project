@@ -1,213 +1,147 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useContext, useCallback, useEffect, ReactNode } from 'react';
 import api from '../services/api';
 
-// Types
-export interface LoginHistoryEntry {
+interface User {
   id: string;
-  email: string;
-  timestamp: number;
-  device: string;
-  browser: string;
-  os?: string;
-  location: string;
-  ipAddress: string;
-  status: 'success' | 'failed';
-  failureReason?: string;
-}
-
-export interface User {
-  id: string;
-  email: string;
   name: string;
+  email: string;
   avatar?: string;
 }
 
 interface AuthContextType {
   user: User | null;
-  loginHistory: LoginHistoryEntry[];
   loading: boolean;
-  login: (email: string, password: string, rememberMe?: boolean) => Promise<boolean>;
+  loginHistory: any[];
+  formattedHistory: any[];
+  login: (email: string, password: string) => Promise<{ success: boolean; message?: string }>;
+  signup: (name: string, email: string, password: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
-  signup: (name: string, email: string, password: string) => Promise<boolean>;
-  clearHistory: () => Promise<void>;
-  refreshHistory: () => Promise<void>;
+  
 }
 
-// Create Context
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Provider Component
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [loginHistory, setLoginHistory] = useState<LoginHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loginHistory, setLoginHistory] = useState<any[]>([]);
+  const [formattedHistory, setFormattedHistory] = useState<any[]>([]);
 
-  // Load user from localStorage and verify token on mount
-  useEffect(() => {
-    const initAuth = async () => {
-      const token = localStorage.getItem('taskly_token');
-      const savedUser = localStorage.getItem('taskly_user');
-
-      if (token && savedUser) {
-        try {
-          // Verify token is still valid
-          const response = await api.auth.verify(token);
-          setUser(JSON.parse(savedUser));
-          
-          // Load login history
-          await loadHistory();
-        } catch (error) {
-          // Token invalid, clear storage
-          console.error('Token verification failed:', error);
-          localStorage.removeItem('taskly_token');
-          localStorage.removeItem('taskly_user');
-        }
+  const login = useCallback(async (email: string, password: string) => {
+    try {
+      const response = await api.auth.login(email, password);
+      
+      if (response.success && response.data) {
+        localStorage.setItem('taskly_token', response.data.token);
+        localStorage.setItem('taskly_user', JSON.stringify(response.data.user));
+        setUser(response.data.user);
+        return { success: true };
       }
-
-      setLoading(false);
-    };
-
-    initAuth();
+      
+      return { success: false, message: response.message || 'Login failed' };
+    } catch (error: any) {
+      return { success: false, message: error.message || 'Login failed' };
+    }
   }, []);
 
-  // Load login history from backend
-  const loadHistory = async () => {
+  const checkAuth = useCallback(async () => {
+    const token = localStorage.getItem('taskly_token');
+    const userData = localStorage.getItem('taskly_user');
+
+    if (!token || !userData) {
+      setLoading(false);
+      return;
+    }
+
     try {
-      const response = await api.history.getHistory(50, 1);
+      setLoading(true);
       
-      if (response.success && response.data.history) {
-        // Convert timestamp strings to numbers and format data
-        const formattedHistory = response.data.history.map((entry: any) => ({
-          id: entry.id,
-          email: entry.email,
-          timestamp: new Date(entry.timestamp).getTime(),
-          device: entry.device,
-          browser: entry.browser,
-          os: entry.os || 'Unknown',
-          location: entry.location,
-          ipAddress: entry.ipAddress,
-          status: entry.status,
-          failureReason: entry.failureReason,
+      // Verify token
+      await api.auth.verify(token);
+
+      // Get login history
+      const response = await api.history.getHistory(50, 1);
+
+      if (response.success && response.data?.history) {
+        setLoginHistory(response.data.history);
+        const formattedHistory = response.data?.history.map((entry: any) => ({
+          ...entry,
+          timestamp: new Date(entry.timestamp).toLocaleString()
         }));
-
-        setLoginHistory(formattedHistory);
+        setFormattedHistory(formattedHistory);
       }
+
+      setUser(JSON.parse(userData));
     } catch (error) {
-      console.error('Failed to load history:', error);
+      console.error('Auth check failed:', error);
+      logout();
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
 
-  const login = async (email: string, password: string, rememberMe: boolean = false): Promise<boolean> => {
+  const signup = useCallback(async (name: string, email: string, password: string) => {
     try {
-      // Call backend API
-      const response = await api.auth.login(email, password);
-
-      if (response.success && response.data) {
-        const { user: userData, token } = response.data;
-
-        // Create user object
-        const newUser: User = {
-          id: userData.id,
-          email: userData.email,
-          name: userData.name,
-          avatar: userData.avatar,
-        };
-
-        setUser(newUser);
-
-        // Store token
-        localStorage.setItem('taskly_token', token);
-
-        if (rememberMe) {
-          localStorage.setItem('taskly_user', JSON.stringify(newUser));
-        }
-
-        // Load login history
-        await loadHistory();
-
-        return true;
-      }
-
-      return false;
-    } catch (error: any) {
-      console.error('Login error:', error);
-      throw error;
-    }
-  };
-
-  const signup = async (name: string, email: string, password: string): Promise<boolean> => {
-    try {
-      // Call backend API
       const response = await api.auth.signup(name, email, password);
-
+      
       if (response.success && response.data) {
-        const { user: userData, token } = response.data;
-
-        // Create user object
-        const newUser: User = {
-          id: userData.id,
-          email: userData.email,
-          name: userData.name,
-          avatar: userData.avatar,
-        };
-
-        setUser(newUser);
-
-        // Store token and user
-        localStorage.setItem('taskly_token', token);
-        localStorage.setItem('taskly_user', JSON.stringify(newUser));
-
-        // Load login history
-        await loadHistory();
-
-        return true;
+        localStorage.setItem('taskly_token', response.data.token);
+        localStorage.setItem('taskly_user', JSON.stringify(response.data.user));
+        setUser(response.data.user);
+        return { success: true };
       }
-
-      return false;
+      
+      return { success: false, message: response.message || 'Signup failed' };
     } catch (error: any) {
-      console.error('Signup error:', error);
-      throw error;
+      return { success: false, message: error.message || 'Signup failed' };
     }
-  };
+  }, []);
 
-  const logout = () => {
-    setUser(null);
-    setLoginHistory([]);
+  const logout = useCallback(() => {
     localStorage.removeItem('taskly_token');
     localStorage.removeItem('taskly_user');
-  };
+    setUser(null);
+    setLoginHistory([]);
+    setFormattedHistory([]);
+  }, []);
 
-  const clearHistory = async () => {
+  /*const googleLogin = useCallback(async (credential: string) => {
     try {
-      await api.history.clearHistory();
-      setLoginHistory([]);
-    } catch (error) {
-      console.error('Failed to clear history:', error);
-      throw error;
+      const response = await api.auth.googleLogin(credential);
+      
+      if (response.success && response.data) {
+        localStorage.setItem('taskly_token', response.data.token);
+        localStorage.setItem('taskly_user', JSON.stringify(response.data.user));
+        setUser(response.data.user);
+        return { success: true };
+      }
+      
+      return { success: false, message: response.message || 'Google login failed' };
+    } catch (error: any) {
+      return { success: false, message: error.message || 'Google login failed' };
     }
-  };
+  }, []);*/
 
-  const refreshHistory = async () => {
-    await loadHistory();
-  };
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
 
   return (
     <AuthContext.Provider value={{ 
       user, 
+      loading, 
       loginHistory, 
-      loading,
+      formattedHistory, 
       login, 
-      logout, 
       signup, 
-      clearHistory,
-      refreshHistory
+      logout, 
+      /*googleLogin*/
     }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
-// Custom Hook
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {

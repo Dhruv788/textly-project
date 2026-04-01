@@ -1,6 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Contact } from './types';
 import api from '../../services/api';
+import { useWebRTC } from '../../hooks/useWebRTC';
+import CallWindow from './CallWindow';
+import IncomingCallModal from './IncomingCallModal';
 
 // ── Group color helpers
 const GROUP_COLORS = ['#2563eb','#7c3aed','#db2777','#ea580c','#16a34a','#0891b2','#d97706','#dc2626'];
@@ -106,6 +109,12 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   const messagesEndRef                  = useRef<HTMLDivElement>(null);
   const typingTimeoutRef                = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTypingRef                     = useRef(false);
+
+  // ✅ Initialize WebRTC hook
+  const webRTC = useWebRTC({
+    socket,
+    currentUserId: currentUser?.id || ''
+  });
 
   const emojis = ["😀","😂","❤️","👍","🎉","😊","🔥","✅","🙏","💯","😍","🤔","👏","😎","🥳"];
   const statusColors = { online: '#22c55e', away: '#f59e0b', offline: '#94a3b8' };
@@ -302,9 +311,71 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
 
         <div style={{ display: 'flex', gap: 2 }}>
-          <button style={styles.iBtn} title="Voice call"><span className="material-icons">call</span></button>
-          <button style={styles.iBtn} title="Video call"><span className="material-icons">videocam</span></button>
-          <button style={styles.iBtn} title="Info" onClick={() => setInfoOpen(true)}><span className="material-icons">info</span></button>
+          {/* ✅ Audio Call Button */}
+          <button
+            onClick={() => {
+              console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              console.log('📱 AUDIO CALL BUTTON CLICKED');
+              console.log('Contact:', contact);
+              console.log('Contact ID:', contact?.id);
+              console.log('Participant ID:', contact?.participantId);
+              console.log('WebRTC hook exists?', !!webRTC);
+              console.log('WebRTC.startCall exists?', typeof webRTC?.startCall);
+              console.log('Socket:', socket);
+              console.log('Socket connected?', socket?.connected);
+              console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              
+              if (contact && contact.type !== 'group') {
+                const receiverId = contact.participantId || contact.id;
+                console.log('Starting audio call to User ID:', receiverId);
+                console.log('Call type: audio');
+                console.log('Receiver name:', contact.name);
+                
+                webRTC.startCall(receiverId, 'audio', contact.name);
+              } else {
+                console.log('❌ Cannot call in group or no contact selected!');
+              }
+            }}
+            style={styles.iBtn}
+            title="Voice call"
+          >
+            <span className="material-icons">call</span>
+          </button>
+
+          {/* ✅ Video Call Button */}
+          <button
+            onClick={() => {
+              console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              console.log('📹 VIDEO CALL BUTTON CLICKED');
+              console.log('Contact:', contact);
+              console.log('Contact ID:', contact?.id);
+              console.log('Participant ID:', contact?.participantId);
+              console.log('WebRTC hook exists?', !!webRTC);
+              console.log('WebRTC.startCall exists?', typeof webRTC?.startCall);
+              console.log('Socket:', socket);
+              console.log('Socket connected?', socket?.connected);
+              console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              
+              if (contact && contact.type !== 'group') {
+                const receiverId = contact.participantId || contact.id;
+                console.log('Starting video call to User ID:', receiverId);
+                console.log('Call type: video');
+                console.log('Receiver name:', contact.name);
+                
+                webRTC.startCall(receiverId, 'video', contact.name);
+              } else {
+                console.log('❌ Cannot call in group or no contact selected!');
+              }
+            }}
+            style={styles.iBtn}
+            title="Video call"
+          >
+            <span className="material-icons">videocam</span>
+          </button>
+
+          <button style={styles.iBtn} title="Info" onClick={() => setInfoOpen(true)}>
+            <span className="material-icons">info</span>
+          </button>
         </div>
       </div>
 
@@ -410,6 +481,31 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           <span className="material-icons">send</span>
         </button>
       </div>
+
+      {/* ✅ Incoming Call Modal */}
+      {webRTC.incomingCall && (
+        <IncomingCallModal
+          callerName={webRTC.incomingCall.fromName || 'Unknown'}
+          callType={webRTC.incomingCall.callType}
+          onAccept={webRTC.acceptCall}
+          onReject={webRTC.rejectCall}
+        />
+      )}
+
+      {/* ✅ Active Call Window */}
+      {webRTC.callActive && (
+        <CallWindow
+          localStream={webRTC.stream}
+          remoteStream={webRTC.remoteStream}
+          callDuration={webRTC.callDuration}
+          isMuted={webRTC.isMuted}
+          isVideoOff={webRTC.isVideoOff}
+          onToggleMute={webRTC.toggleMute}
+          onToggleVideo={webRTC.toggleVideo}
+          onEndCall={() => webRTC.endCall(contact?.participantId || '')}
+          darkMode={darkMode}
+        />
+      )}
     </main>
   );
 };

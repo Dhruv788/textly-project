@@ -76,34 +76,42 @@ class ApiService {
   }
 
   // ── AUTH
-  auth = {
-    login: async (
-      email: string,
-      password: string
-    ): Promise<ApiResponse<AuthResponse>> => {
-      const response: AxiosResponse<ApiResponse<AuthResponse>> =
-        await this.client.post('/api/auth/login', { email, password });
-      return response.data;
-    },
+  // ── AUTH
+ auth = {
+  login: async (
+    email: string,
+    password: string
+  ): Promise<ApiResponse<AuthResponse>> => {
+    const response: AxiosResponse<ApiResponse<AuthResponse>> =
+      await this.client.post('/api/auth/login', { email, password });
+    return response.data;
+  },
 
-    signup: async (
-      name: string,
-      email: string,
-      password: string
-    ): Promise<ApiResponse<AuthResponse>> => {
-      const response: AxiosResponse<ApiResponse<AuthResponse>> =
-        await this.client.post('/api/auth/signup', { name, email, password });
-      return response.data;
-    },
+  signup: async (
+    name: string,
+    email: string,
+    password: string
+  ): Promise<ApiResponse<AuthResponse>> => {
+    const response: AxiosResponse<ApiResponse<AuthResponse>> =
+      await this.client.post('/api/auth/signup', { name, email, password });
+    return response.data;
+  },
 
-    verify: async (token: string): Promise<ApiResponse<{ user: any }>> => {
-      const response: AxiosResponse<ApiResponse<{ user: any }>> =
-        await this.client.get('/api/auth/verify', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      return response.data;
-    },
-  };
+  verify: async (token: string): Promise<ApiResponse<{ user: any }>> => {
+    const response: AxiosResponse<ApiResponse<{ user: any }>> =
+      await this.client.get('/api/auth/verify', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    return response.data;
+  },
+
+  // ✅ ADD THIS METHOD
+  googleLogin: async (credential: string): Promise<ApiResponse<AuthResponse>> => {
+    const response: AxiosResponse<ApiResponse<AuthResponse>> =
+      await this.client.post('/api/auth/google', { credential });
+    return response.data;
+  },
+};
 
   // ── HISTORY
   history = {
