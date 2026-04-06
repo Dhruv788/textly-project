@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import api from '../services/api';
+import { initOneSignal, logoutOneSignal } from '../services/onesignal';
 
 export interface LoginHistoryEntry {
   id: string;
@@ -38,20 +39,28 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser]               = useState<User | null>(null);
   const [loginHistory, setLoginHistory] = useState<LoginHistoryEntry[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+
+  // ── Init OneSignal whenever a user is set
+  useEffect(() => {
+    if (user?.id) {
+      initOneSignal(user.id);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     const initAuth = async () => {
-      const token = localStorage.getItem('taskly_token');
+      const token     = localStorage.getItem('taskly_token');
       const savedUser = localStorage.getItem('taskly_user');
 
       if (token && savedUser) {
         try {
           await api.auth.verify(token);
-          setUser(JSON.parse(savedUser));
+          const parsedUser = JSON.parse(savedUser);
+          setUser(parsedUser);
           await loadHistory();
         } catch {
           localStorage.removeItem('taskly_token');
@@ -69,18 +78,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (res.success && res.data?.history) {
         const formattedHistory = res.data.history.map((entry: any) => ({
-          id: entry.id,
-          email: entry.email,
-          timestamp: new Date(entry.timestamp).getTime(),
-          device: entry.device,
-          browser: entry.browser,
-          os: entry.os || 'Unknown',
-          location: entry.location,
-          ipAddress: entry.ipAddress,
-          status: entry.status,
+          id:            entry.id,
+          email:         entry.email,
+          timestamp:     new Date(entry.timestamp).getTime(),
+          device:        entry.device,
+          browser:       entry.browser,
+          os:            entry.os || 'Unknown',
+          location:      entry.location,
+          ipAddress:     entry.ipAddress,
+          status:        entry.status,
           failureReason: entry.failureReason,
         }));
-
         setLoginHistory(formattedHistory);
       }
     } catch (error) {
@@ -99,13 +107,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { user: userData, token } = res.data;
 
         const newUser: User = {
-          id: userData.id,
-          email: userData.email,
-          name: userData.name,
+          id:     userData.id,
+          email:  userData.email,
+          name:   userData.name,
           avatar: userData.avatar,
         };
 
-        setUser(newUser);
+        setUser(newUser); // ← triggers useEffect → initOneSignal(newUser.id)
         localStorage.setItem('taskly_token', token);
         localStorage.setItem('taskly_user', JSON.stringify(newUser));
         await loadHistory();
@@ -128,13 +136,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const { user: userData, token } = res.data;
 
         const newUser: User = {
-          id: userData.id,
-          email: userData.email,
-          name: userData.name,
+          id:     userData.id,
+          email:  userData.email,
+          name:   userData.name,
           avatar: userData.avatar,
         };
 
-        setUser(newUser);
+        setUser(newUser); // ← triggers useEffect → initOneSignal(newUser.id)
         localStorage.setItem('taskly_token', token);
         localStorage.setItem('taskly_user', JSON.stringify(newUser));
         await loadHistory();
@@ -157,13 +165,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const userData = res.data.user;
 
         const newUser: User = {
-          id: userData.id,
-          email: userData.email,
-          name: userData.name,
+          id:     userData.id,
+          email:  userData.email,
+          name:   userData.name,
           avatar: userData.avatar,
         };
 
-        setUser(newUser);
+        setUser(newUser); // ← triggers useEffect → initOneSignal(newUser.id)
         localStorage.setItem('taskly_token', token);
         localStorage.setItem('taskly_user', JSON.stringify(newUser));
         await loadHistory();
@@ -174,6 +182,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const logout = () => {
+    logoutOneSignal(); // ← unlink OneSignal on logout
     setUser(null);
     setLoginHistory([]);
     localStorage.removeItem('taskly_token');
@@ -202,7 +211,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         googleLogin,
         clearHistory,
         refreshHistory,
-        setError
+        setError,
       }}
     >
       {children}
@@ -215,4 +224,3 @@ export const useAuth = () => {
   if (!context) throw new Error('useAuth must be used within AuthProvider');
   return context;
 };
-

@@ -11,22 +11,44 @@ import { useSocket } from '../../contexts/SocketContext';
 import api from '../../services/api';
 import UserSearch from './UserSearch';
 import CreateGroup from './CreateGroup';
+import { initOneSignal, logoutOneSignal } from '../../services/onesignal'; // ← ADD
+import OneSignal from 'react-onesignal';                                    // ← ADD
 
 const ChatDashboard: React.FC = () => {
   const { user } = useAuth();
   const { socket } = useSocket();
 
-  const [activeSection, setActiveSection] = useState<Section>('chats');
+  const [activeSection, setActiveSection]     = useState<Section>('chats');
   const [activeContactId, setActiveContactId] = useState<string | null>(null);
-  const [infoOpen, setInfoOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showSearch, setShowSearch] = useState(false);
+  const [infoOpen, setInfoOpen]               = useState(false);
+  const [darkMode, setDarkMode]               = useState(false);
+  const [contacts, setContacts]               = useState<Contact[]>([]);
+  const [loading, setLoading]                 = useState(true);
+  const [showSearch, setShowSearch]           = useState(false);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
-  const [typingUsers, setTypingUsers] = useState<{ [convId: string]: string }>({});
-  // Prevent unused variable warning
-  void typingUsers;
+
+  // ── OneSignal init after user loads ← ADD
+  useEffect(() => {
+    if (!user?.id) return;
+    initOneSignal(user.id);
+  }, [user?.id]);
+
+  // ── Handle notification click → open the right conversation ← ADD
+  useEffect(() => {
+    const handler = (event: any) => {
+      const data = event?.notification?.additionalData;
+      if (!data) return;
+      console.log('🔔 Notification clicked:', data);
+      if (data.conversationId) {
+        handleOpenContact(data.conversationId);
+        setActiveSection('chats');
+      }
+    };
+    OneSignal.Notifications.addEventListener('click', handler);
+    return () => {
+      OneSignal.Notifications.removeEventListener('click', handler);
+    };
+  }, []);
 
   // ── Start new direct chat
   const handleStartChat = useCallback(async (searchUser: any) => {
@@ -85,12 +107,10 @@ const ChatDashboard: React.FC = () => {
       memberCount: conv.participants.length,
       members: conv.participants,
     };
-
     setContacts(prev => [newContact, ...prev]);
     setActiveContactId(conv._id);
     setActiveSection('chats');
     setShowCreateGroup(false);
-    console.log('✅ Group created:', conv.name);
   }, [user]);
 
   // ── Load conversations on mount
@@ -101,20 +121,18 @@ const ChatDashboard: React.FC = () => {
         const res = await (api as any).conversations.getAll();
         if (res.success && res.data) {
           const transformed = res.data.map((conv: any) => {
-            const other = conv.participants.find(
-              (p: any) => p._id.toString() !== user?.id.toString()
-            );
             const isGroup = conv.type === 'group';
-
+            const other = conv.participants.find(
+              (p: any) => p._id?.toString() !== user?.id?.toString()
+            );
             return {
               id: conv._id,
               conversationId: conv._id,
               participantId: isGroup ? undefined : other?._id?.toString(),
-              // For groups, store ALL participant IDs except self
               participantIds: isGroup
                 ? conv.participants
                     .map((p: any) => p._id?.toString())
-                    .filter((id: string) => id !== user?.id)
+                    .filter((id: string) => id !== user?.id?.toString())
                 : undefined,
               name: isGroup ? conv.name : other?.name || 'Unknown',
               avatar: isGroup
@@ -135,7 +153,6 @@ const ChatDashboard: React.FC = () => {
               members: isGroup ? conv.participants : undefined,
             };
           });
-
           setContacts(transformed);
           if (transformed.length > 0) setActiveContactId(transformed[0].id);
         }
@@ -145,114 +162,110 @@ const ChatDashboard: React.FC = () => {
         setLoading(false);
       }
     };
-
     if (user) loadConversations();
   }, [user]);
 
-  // ── Real-time socket events
+  // ── ALL real-time socket events live HERE only
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !user) return;
 
-    // Incoming message
-    socket.on('receive-message', ({ conversationId, message }: any) => {
-      const time = new Date(message.createdAt).toLocaleTimeString([], {
-        hour: '2-digit', minute: '2-digit'
-      });
+    const handleReceiveMessage = ({ conversationId, message }: any) => {
+      console.log('📨 receive-message:', { conversationId, message });
+
+      const time = new Date(message.createdAt || Date.now())
+        .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      const msgText = message.text || message.content || '';
+
+      const isMine =
+        message.sender?._id?.toString() === user?.id?.toString() ||
+        message.sender?.toString() === user?.id?.toString();
+
       setContacts(prev => prev.map(c => {
-        if (c.id === conversationId) {
-          const isMine = message.sender?._id?.toString() === user?.id?.toString()
-                      || message.sender?.toString() === user?.id?.toString();
-          return {
-            ...c,
-            messages: [
-              ...(c.messages || []),
-              { id: message._id, text: message.text, sent: isMine, time, senderName: message.sender?.name }
-            ],
-            lastMessage: message.text,
-            time,
-            unread: c.id !== activeContactId ? (c.unread || 0) + 1 : 0
-          };
-        }
-        return c;
-      }));
-    });
+        if (c.id !== conversationId) return c;
 
-    // Online status
-    socket.on('user-status-change', ({ userId, isOnline, lastSeen }: any) => {
+        const alreadyExists = c.messages.some(
+          (m: any) => m.id === message._id || m.id === message.id
+        );
+        if (alreadyExists) return c;
+
+        return {
+          ...c,
+          messages: [
+            ...(c.messages || []),
+            {
+              id: message._id || message.id,
+              text: msgText,
+              sent: isMine,
+              time,
+              senderName: message.sender?.name || message.senderName,
+              status: 'delivered',
+            }
+          ],
+          lastMessage: msgText,
+          time,
+          unread: c.id !== activeContactId ? (c.unread || 0) + 1 : 0,
+        };
+      }));
+    };
+
+    const handleUserStatusChange = ({ userId, isOnline, lastSeen }: any) => {
       setContacts(prev => prev.map(c =>
         c.participantId === userId?.toString()
           ? { ...c, status: isOnline ? 'online' : 'offline', lastSeen }
           : c
       ));
-    });
+    };
 
-    // Typing indicators
-    socket.on('user-typing', ({ conversationId, userId, userName }: any) => {
-      if (userId !== user?.id) {
-        setTypingUsers(prev => ({ ...prev, [conversationId]: userName || 'Someone' }));
-      }
-    });
-
-    socket.on('user-stop-typing', ({ conversationId }: any) => {
-      setTypingUsers(prev => {
-        const next = { ...prev };
-        delete next[conversationId];
-        return next;
-      });
-    });
-
-    // Message status updates
-    socket.on('message-status-update', ({ conversationId, messageId, status }: any) => {
+    const handleMessagesSeen = ({ conversationId }: any) => {
       setContacts(prev => prev.map(c => {
         if (c.id !== conversationId) return c;
         return {
           ...c,
-          messages: c.messages.map(m =>
-            m.id === messageId ? { ...m, status } : m
-          )
+          messages: c.messages.map(m => m.sent ? { ...m, status: 'seen' } : m)
         };
       }));
-    });
+    };
 
-    // Messages seen
-    socket.on('messages-seen', ({ conversationId }: any) => {
+    const handleMessageStatusUpdate = ({ conversationId, messageId, status }: any) => {
       setContacts(prev => prev.map(c => {
         if (c.id !== conversationId) return c;
         return {
           ...c,
-          messages: c.messages.map(m =>
-            m.sent ? { ...m, status: 'seen' } : m
-          )
+          messages: c.messages.map(m => m.id === messageId ? { ...m, status } : m)
         };
       }));
-    });
+    };
+
+    socket.on('receive-message',       handleReceiveMessage);
+    socket.on('user-status-change',    handleUserStatusChange);
+    socket.on('messages-seen',         handleMessagesSeen);
+    socket.on('message-status-update', handleMessageStatusUpdate);
 
     return () => {
-      socket.off('receive-message');
-      socket.off('user-status-change');
-      socket.off('user-typing');
-      socket.off('user-stop-typing');
-      socket.off('message-status-update');
-      socket.off('messages-seen');
+      socket.off('receive-message',       handleReceiveMessage);
+      socket.off('user-status-change',    handleUserStatusChange);
+      socket.off('messages-seen',         handleMessagesSeen);
+      socket.off('message-status-update', handleMessageStatusUpdate);
     };
   }, [socket, user, activeContactId]);
 
-  // ── Open a contact and load messages
+  // ── Open contact and load messages
   const handleOpenContact = useCallback(async (id: string) => {
     setActiveContactId(id);
     setActiveSection('chats');
     setContacts(prev => prev.map(c => c.id === id ? { ...c, unread: 0 } : c));
-
     try {
       const res = await (api as any).messages.getMessages(id);
       if (res.success && res.data) {
         const msgs = res.data.map((m: any) => ({
           id: m._id,
-          text: m.text,
+          text: m.text || m.content || '',
           sent: m.sender?._id?.toString() === user?.id?.toString(),
           time: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           senderName: m.sender?.name,
           senderAvatar: m.sender?.avatar,
+          status: 'seen',
         }));
         setContacts(prev => prev.map(c => c.id === id ? { ...c, messages: msgs } : c));
       }
@@ -261,13 +274,14 @@ const ChatDashboard: React.FC = () => {
     }
   }, [user]);
 
-  const handleSwitchSection = useCallback((section: Section) => {
-    setActiveSection(section);
+  // ── Logout — clears OneSignal too ← ADD
+  const handleLogout = useCallback(async () => {
+    await logoutOneSignal();
   }, []);
+  void handleLogout; // ← remove this line once you wire to your logout button
 
-  const handleToggleDarkMode = useCallback(() => {
-    setDarkMode(prev => !prev);
-  }, []);
+  const handleSwitchSection  = useCallback((section: Section) => setActiveSection(section), []);
+  const handleToggleDarkMode = useCallback(() => setDarkMode(prev => !prev), []);
 
   const activeContact = contacts.find(c => c.id === activeContactId);
 
@@ -284,27 +298,10 @@ const ChatDashboard: React.FC = () => {
 
   return (
     <div id="app" style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-      <Navigation
-        activeSection={activeSection}
-        setActiveSection={handleSwitchSection}
-        darkMode={darkMode}
-      />
+      <Navigation activeSection={activeSection} setActiveSection={handleSwitchSection} darkMode={darkMode} />
 
-      {/* User search modal */}
-      {showSearch && (
-        <UserSearch
-          onStartChat={handleStartChat}
-          onClose={() => setShowSearch(false)}
-        />
-      )}
-
-      {/* Create group modal */}
-      {showCreateGroup && (
-        <CreateGroup
-          onCreateGroup={handleCreateGroup}
-          onClose={() => setShowCreateGroup(false)}
-        />
-      )}
+      {showSearch && <UserSearch onStartChat={handleStartChat} onClose={() => setShowSearch(false)} />}
+      {showCreateGroup && <CreateGroup onCreateGroup={handleCreateGroup} onClose={() => setShowCreateGroup(false)} />}
 
       <Sidebar
         activeSection={activeSection}

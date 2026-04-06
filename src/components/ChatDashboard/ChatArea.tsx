@@ -1,3 +1,5 @@
+// src/components/ChatDashboard/ChatArea.tsx
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Contact } from './types';
 import api from '../../services/api';
@@ -101,88 +103,95 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   activeContactId, contacts, setContacts,
   setInfoOpen, darkMode, currentUser, socket
 }) => {
-  const [messageText, setMessageText]   = useState('');
-  const [showEmoji, setShowEmoji]       = useState(false);
-  const [sending, setSending]           = useState(false);
-  const [isTyping, setIsTyping]         = useState(false);
-  const [typingName, setTypingName]     = useState('');
-  const messagesEndRef                  = useRef<HTMLDivElement>(null);
-  const typingTimeoutRef                = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isTypingRef                     = useRef(false);
+  const [messageText, setMessageText] = useState('');
+  const [showEmoji, setShowEmoji]     = useState(false);
+  const [sending, setSending]         = useState(false);
+  const [isTyping, setIsTyping]       = useState(false);
+  const [typingName, setTypingName]   = useState('');
+  const messagesEndRef                = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef              = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTypingRef                   = useRef(false);
 
-  // ✅ Initialize WebRTC hook
-  const webRTC = useWebRTC({
-    socket,
-    currentUserId: currentUser?.id || ''
-  });
+  const webRTC = useWebRTC({ socket, currentUserId: currentUser?.id || '' });
 
   const emojis = ["😀","😂","❤️","👍","🎉","😊","🔥","✅","🙏","💯","😍","🤔","👏","😎","🥳"];
   const statusColors = { online: '#22c55e', away: '#f59e0b', offline: '#94a3b8' };
-
   const contact = contacts.find(c => c.id === activeContactId);
 
+  // ── Auto scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [contact?.messages, isTyping]);
 
+  // ── TYPING INDICATORS ONLY — receive-message is handled in ChatDashboard
   useEffect(() => {
     if (!socket) return;
 
-    socket.on('user-typing', ({ conversationId, userId }: any) => {
+    const handleUserTyping = ({ conversationId, userId }: any) => {
       if (conversationId === activeContactId && userId !== currentUser?.id) {
         const typingContact = contacts.find(c => c.id === conversationId);
         setTypingName(typingContact?.name || 'Someone');
         setIsTyping(true);
       }
-    });
+    };
 
-    socket.on('user-stop-typing', ({ conversationId, userId }: any) => {
+    const handleUserStopTyping = ({ conversationId, userId }: any) => {
       if (conversationId === activeContactId && userId !== currentUser?.id) {
         setIsTyping(false);
         setTypingName('');
       }
-    });
+    };
 
-    socket.on('messages-seen', ({ conversationId }: any) => {
-      if (conversationId === activeContactId) {
-        setContacts(prev => prev.map(c => {
-          if (c.id === conversationId) {
-            return { ...c, messages: c.messages.map(m => m.sent ? { ...m, status: 'seen' as MessageStatus } : m) };
-          }
-          return c;
-        }));
-      }
-    });
+    socket.on('user-typing',      handleUserTyping);
+    socket.on('user-stop-typing', handleUserStopTyping);
 
     return () => {
-      socket.off('user-typing');
-      socket.off('user-stop-typing');
-      socket.off('messages-seen');
+      socket.off('user-typing',      handleUserTyping);
+      socket.off('user-stop-typing', handleUserStopTyping);
     };
   }, [socket, activeContactId, currentUser, contacts]);
 
+  // ── Mark messages as seen when switching conversations
   useEffect(() => {
     if (!socket || !activeContactId || !contact) return;
     const receiverIds = contact.type === 'group'
       ? ((contact as any).participantIds || []).filter((id: string) => id !== currentUser?.id)
       : [contact.participantId].filter(Boolean);
-    socket.emit('mark-seen', { conversationId: activeContactId, seenBy: currentUser?.id, receiverIds });
+    if (receiverIds.length > 0) {
+      socket.emit('mark-seen', {
+        conversationId: activeContactId,
+        seenBy: currentUser?.id,
+        receiverIds,
+      });
+    }
   }, [activeContactId, socket, currentUser]);
 
+  // ── Typing emit handler
   const handleTyping = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setMessageText(e.target.value);
     if (!socket || !contact) return;
+
     const receiverIds = contact.type === 'group'
       ? ((contact as any).participantIds || []).filter((id: string) => id !== currentUser?.id)
       : [contact.participantId].filter(Boolean);
+
     if (!isTypingRef.current) {
       isTypingRef.current = true;
-      socket.emit('typing', { conversationId: activeContactId, userId: currentUser?.id, receiverIds });
+      socket.emit('typing', {
+        conversationId: activeContactId,
+        userId: currentUser?.id,
+        receiverIds,
+      });
     }
+
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
       isTypingRef.current = false;
-      socket.emit('stop-typing', { conversationId: activeContactId, userId: currentUser?.id, receiverIds });
+      socket.emit('stop-typing', {
+        conversationId: activeContactId,
+        userId: currentUser?.id,
+        receiverIds,
+      });
     }, 1500);
   }, [socket, contact, activeContactId, currentUser]);
 
@@ -201,24 +210,36 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     return 'rgba(255,255,255,0.6)';
   };
 
+  // ── Send message
   const handleSendMessage = async () => {
     if (!messageText.trim() || !contact || sending) return;
     const text = messageText.trim();
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+    // Stop typing indicator
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     if (isTypingRef.current) {
       isTypingRef.current = false;
       const receiverIds = contact.type === 'group'
         ? ((contact as any).participantIds || []).filter((id: string) => id !== currentUser?.id)
         : [contact.participantId].filter(Boolean);
-      socket?.emit('stop-typing', { conversationId: activeContactId, userId: currentUser?.id, receiverIds });
+      socket?.emit('stop-typing', {
+        conversationId: activeContactId,
+        userId: currentUser?.id,
+        receiverIds,
+      });
     }
 
+    // Optimistic message
     const tempId = Date.now();
     setContacts(prev => prev.map(c =>
       c.id === activeContactId
-        ? { ...c, messages: [...c.messages, { id: tempId, text, sent: true, time, status: 'sending' as MessageStatus }], lastMessage: text, time }
+        ? {
+            ...c,
+            messages: [...c.messages, { id: tempId, text, sent: true, time, status: 'sending' as MessageStatus }],
+            lastMessage: text,
+            time,
+          }
         : c
     ));
     setMessageText('');
@@ -227,26 +248,66 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     try {
       setSending(true);
       const res = await (api as any).messages.send(contact.conversationId, text);
+
       if (res.success && res.data) {
+        // ✅ Replace temp message with real one
         setContacts(prev => prev.map(c => {
           if (c.id !== activeContactId) return c;
-          return { ...c, messages: c.messages.map(m => m.id === tempId ? { ...m, id: res.data._id, status: 'sent' as MessageStatus } : m) };
+          return {
+            ...c,
+            messages: c.messages.map(m =>
+              m.id === tempId
+                ? { ...m, id: res.data._id, status: 'sent' as MessageStatus }
+                : m
+            ),
+          };
         }));
+
+        // ✅ Emit via socket for real-time delivery to receiver
         if (socket?.connected) {
           const receiverIds = contact.type === 'group'
             ? ((contact as any).participantIds || []).filter((id: string) => id !== currentUser?.id)
             : [contact.participantId].filter((id): id is string => Boolean(id));
+
+          console.log('📤 Emitting send-message:', {
+            conversationId: contact.conversationId,
+            receiverIds,
+            messageId: res.data._id,
+          });
+
           if (receiverIds.length > 0) {
-            socket.emit('send-message', { conversationId: contact.conversationId, message: res.data, receiverIds });
+            socket.emit('send-message', {
+              conversationId: contact.conversationId,
+              message: res.data,
+              receiverIds,
+            });
+
+            // Mark as delivered optimistically
             setContacts(prev => prev.map(c => {
               if (c.id !== activeContactId) return c;
-              return { ...c, messages: c.messages.map(m => m.id === res.data._id ? { ...m, status: 'delivered' as MessageStatus } : m) };
+              return {
+                ...c,
+                messages: c.messages.map(m =>
+                  m.id === res.data._id
+                    ? { ...m, status: 'delivered' as MessageStatus }
+                    : m
+                ),
+              };
             }));
+          } else {
+            console.error('❌ receiverIds is empty — message not emitted via socket');
           }
+        } else {
+          console.error('❌ Socket not connected');
         }
       }
     } catch (err) {
       console.error('❌ Send failed:', err);
+      // Revert optimistic message on failure
+      setContacts(prev => prev.map(c => {
+        if (c.id !== activeContactId) return c;
+        return { ...c, messages: c.messages.filter(m => m.id !== tempId) };
+      }));
     } finally {
       setSending(false);
     }
@@ -258,9 +319,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 
   if (!contact) {
     return (
-      <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: darkMode ? '#0f172a' : '#f8fafc', flexDirection: 'column', gap: 12 }}>
+      <main style={{
+        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: darkMode ? '#0f172a' : '#f8fafc', flexDirection: 'column', gap: 12
+      }}>
         <div style={{ fontSize: 48 }}>💬</div>
-        <div style={{ fontSize: 16, fontWeight: 600, color: '#94a3b8', fontFamily: 'Inter, sans-serif' }}>Select a chat to start messaging</div>
+        <div style={{ fontSize: 16, fontWeight: 600, color: '#94a3b8', fontFamily: 'Inter, sans-serif' }}>
+          Select a chat to start messaging
+        </div>
       </main>
     );
   }
@@ -275,8 +341,6 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       {/* ── Header */}
       <div style={{ ...styles.chatHdr, background: darkMode ? '#1e293b' : '#ffffff' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-
-          {/* ── Avatar */}
           <div style={{ position: 'relative' }}>
             {contact.type === 'group' ? (
               <GroupAvatar members={members} name={contact.name} size={42} />
@@ -289,13 +353,10 @@ const ChatArea: React.FC<ChatAreaProps> = ({
               </>
             )}
           </div>
-
           <div>
             <div style={{ fontSize: 15, fontWeight: 700, color: textColor, fontFamily: 'Inter, sans-serif' }}>
               {contact.name}
             </div>
-
-            {/* ── Subtitle */}
             {isTyping ? (
               <div style={{ fontSize: 12, marginTop: 1, color: '#3b82f6', fontFamily: 'Inter, sans-serif', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 4 }}>
                 <TypingDots /> {contact.type === 'group' ? `${typingName} is typing...` : 'typing...'}
@@ -311,68 +372,26 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         </div>
 
         <div style={{ display: 'flex', gap: 2 }}>
-          {/* ✅ Audio Call Button */}
           <button
             onClick={() => {
-              console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-              console.log('📱 AUDIO CALL BUTTON CLICKED');
-              console.log('Contact:', contact);
-              console.log('Contact ID:', contact?.id);
-              console.log('Participant ID:', contact?.participantId);
-              console.log('WebRTC hook exists?', !!webRTC);
-              console.log('WebRTC.startCall exists?', typeof webRTC?.startCall);
-              console.log('Socket:', socket);
-              console.log('Socket connected?', socket?.connected);
-              console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-              
               if (contact && contact.type !== 'group') {
-                const receiverId = contact.participantId || contact.id;
-                console.log('Starting audio call to User ID:', receiverId);
-                console.log('Call type: audio');
-                console.log('Receiver name:', contact.name);
-                
-                webRTC.startCall(receiverId, 'audio', contact.name);
-              } else {
-                console.log('❌ Cannot call in group or no contact selected!');
+                webRTC.startCall(contact.participantId || contact.id, 'audio', contact.name);
               }
             }}
-            style={styles.iBtn}
-            title="Voice call"
+            style={styles.iBtn} title="Voice call"
           >
             <span className="material-icons">call</span>
           </button>
-
-          {/* ✅ Video Call Button */}
           <button
             onClick={() => {
-              console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-              console.log('📹 VIDEO CALL BUTTON CLICKED');
-              console.log('Contact:', contact);
-              console.log('Contact ID:', contact?.id);
-              console.log('Participant ID:', contact?.participantId);
-              console.log('WebRTC hook exists?', !!webRTC);
-              console.log('WebRTC.startCall exists?', typeof webRTC?.startCall);
-              console.log('Socket:', socket);
-              console.log('Socket connected?', socket?.connected);
-              console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-              
               if (contact && contact.type !== 'group') {
-                const receiverId = contact.participantId || contact.id;
-                console.log('Starting video call to User ID:', receiverId);
-                console.log('Call type: video');
-                console.log('Receiver name:', contact.name);
-                
-                webRTC.startCall(receiverId, 'video', contact.name);
-              } else {
-                console.log('❌ Cannot call in group or no contact selected!');
+                webRTC.startCall(contact.participantId || contact.id, 'video', contact.name);
               }
             }}
-            style={styles.iBtn}
-            title="Video call"
+            style={styles.iBtn} title="Video call"
           >
             <span className="material-icons">videocam</span>
           </button>
-
           <button style={styles.iBtn} title="Info" onClick={() => setInfoOpen(true)}>
             <span className="material-icons">info</span>
           </button>
@@ -389,15 +408,14 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         )}
 
         {contact.messages.map((msg, i) => (
-          <div key={msg.id} style={{ ...styles.msgRow, justifyContent: msg.sent ? 'flex-end' : 'flex-start', animationDelay: `${i * 0.04}s` }}>
-
-            {/* ── Received avatar: individual for group, contact for P2P */}
+          <div
+            key={msg.id}
+            style={{ ...styles.msgRow, justifyContent: msg.sent ? 'flex-end' : 'flex-start', animationDelay: `${i * 0.04}s` }}
+          >
             {!msg.sent && (
               <div style={{
                 ...styles.cAv,
-                background: contact.type === 'group'
-                  ? getColor(msg.senderName || '?')
-                  : contact.color,
+                background: contact.type === 'group' ? getColor(msg.senderName || '?') : contact.color,
                 width: 28, height: 28, fontSize: 10
               }}>
                 {contact.type === 'group'
@@ -413,18 +431,21 @@ const ChatArea: React.FC<ChatAreaProps> = ({
                 : { ...styles.bubbleRecv, background: darkMode ? '#1e293b' : '#ffffff', color: textColor, borderColor: darkMode ? '#334155' : '#f1f5f9' }
               )
             }}>
-              {/* ── Sender name in group for received messages */}
               {!msg.sent && contact.type === 'group' && msg.senderName && (
                 <div style={{ fontSize: 10, fontWeight: 700, color: getColor(msg.senderName), marginBottom: 3 }}>
                   {msg.senderName}
                 </div>
               )}
-
               <span style={styles.msgText}>{msg.text}</span>
               <span style={{ ...styles.msgTime, display: 'flex', alignItems: 'center', gap: 3 }}>
                 {msg.time}
                 {msg.sent && (
-                  <span style={{ fontSize: 11, fontWeight: 600, color: getStatusColor((msg as any).status), letterSpacing: (msg as any).status === 'seen' || (msg as any).status === 'delivered' ? '-2px' : '0px', marginLeft: 2 }}>
+                  <span style={{
+                    fontSize: 11, fontWeight: 600,
+                    color: getStatusColor((msg as any).status),
+                    letterSpacing: (msg as any).status === 'seen' || (msg as any).status === 'delivered' ? '-2px' : '0px',
+                    marginLeft: 2
+                  }}>
                     {getStatusIcon((msg as any).status)}
                   </span>
                 )}
@@ -477,12 +498,16 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           onKeyDown={handleKeyPress}
           rows={1}
         />
-        <button style={{ ...styles.sendBtn, opacity: sending ? 0.7 : 1 }} onClick={handleSendMessage} disabled={sending}>
+        <button
+          style={{ ...styles.sendBtn, opacity: sending ? 0.7 : 1 }}
+          onClick={handleSendMessage}
+          disabled={sending}
+        >
           <span className="material-icons">send</span>
         </button>
       </div>
 
-      {/* ✅ Incoming Call Modal */}
+      {/* ── Incoming Call Modal */}
       {webRTC.incomingCall && (
         <IncomingCallModal
           callerName={webRTC.incomingCall.fromName || 'Unknown'}
@@ -492,7 +517,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         />
       )}
 
-      {/* ✅ Active Call Window */}
+      {/* ── Active Call Window */}
       {webRTC.callActive && (
         <CallWindow
           localStream={webRTC.stream}
@@ -513,29 +538,33 @@ const ChatArea: React.FC<ChatAreaProps> = ({
 const TypingDots: React.FC = () => (
   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
     {[0,1,2].map(i => (
-      <span key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', display: 'inline-block', animation: 'typingBounce 1.2s infinite ease-in-out', animationDelay: `${i * 0.2}s` }} />
+      <span key={i} style={{
+        width: 6, height: 6, borderRadius: '50%', background: '#3b82f6',
+        display: 'inline-block', animation: 'typingBounce 1.2s infinite ease-in-out',
+        animationDelay: `${i * 0.2}s`
+      }} />
     ))}
     <style>{`@keyframes typingBounce { 0%,80%,100%{transform:translateY(0);opacity:.4} 40%{transform:translateY(-5px);opacity:1} }`}</style>
   </span>
 );
 
 const styles: Record<string, React.CSSProperties> = {
-  chat: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 },
-  chatHdr: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderBottom: '1px solid #e2e8f0', flexShrink: 0 },
-  cAv: { borderRadius: '50%', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13 },
-  sdot: { position: 'absolute', bottom: 1, right: 1, width: 10, height: 10, borderRadius: '50%', border: '2px solid white' },
-  iBtn: { background: 'none', border: 'none', cursor: 'pointer', padding: 7, borderRadius: 8, color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  messages: { flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 8 },
-  msgRow: { display: 'flex', alignItems: 'flex-end', gap: 8 },
-  bubble: { maxWidth: '60%', padding: '10px 14px', borderRadius: 16, display: 'flex', flexDirection: 'column', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
+  chat:       { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 },
+  chatHdr:    { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderBottom: '1px solid #e2e8f0', flexShrink: 0 },
+  cAv:        { borderRadius: '50%', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13 },
+  sdot:       { position: 'absolute', bottom: 1, right: 1, width: 10, height: 10, borderRadius: '50%', border: '2px solid white' },
+  iBtn:       { background: 'none', border: 'none', cursor: 'pointer', padding: 7, borderRadius: 8, color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  messages:   { flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 8 },
+  msgRow:     { display: 'flex', alignItems: 'flex-end', gap: 8 },
+  bubble:     { maxWidth: '60%', padding: '10px 14px', borderRadius: 16, display: 'flex', flexDirection: 'column', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
   bubbleSent: { background: '#2563eb', color: 'white', borderBottomRightRadius: 4 },
   bubbleRecv: { borderBottomLeftRadius: 4, border: '1px solid #f1f5f9' },
-  msgText: { fontSize: 13.5, lineHeight: 1.55 },
-  msgTime: { fontSize: 10, opacity: 0.6, alignSelf: 'flex-end', marginTop: 3 },
-  eBtn: { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: 4, borderRadius: 6 },
-  inputBar: { display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', borderTop: '1px solid #e2e8f0', flexShrink: 0 },
-  txInput: { flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13.5, fontFamily: 'Inter, sans-serif', outline: 'none', lineHeight: 1.5, resize: 'none', height: 42 },
-  sendBtn: { width: 42, height: 42, borderRadius: 8, background: '#2563eb', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' },
+  msgText:    { fontSize: 13.5, lineHeight: 1.55 },
+  msgTime:    { fontSize: 10, opacity: 0.6, alignSelf: 'flex-end', marginTop: 3 },
+  eBtn:       { background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', padding: 4, borderRadius: 6 },
+  inputBar:   { display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', borderTop: '1px solid #e2e8f0', flexShrink: 0 },
+  txInput:    { flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13.5, fontFamily: 'Inter, sans-serif', outline: 'none', lineHeight: 1.5, resize: 'none', height: 42 },
+  sendBtn:    { width: 42, height: 42, borderRadius: 8, background: '#2563eb', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: 'white' },
 };
 
 export default ChatArea;
